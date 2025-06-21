@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crypto Arbitrage Monitor</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #121212;
+      color: #eee;
+      padding: 1rem;
+    }
+
+    h1 {
+      text-align: center;
+      color: #00ffa2;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+    }
+
+    th,
+    td {
+      padding: 0.6rem;
+      text-align: center;
+      border: 1px solid #444;
+    }
+
+    th {
+      background-color: #222;
+    }
+
+    .positive {
+      color: #00ff88;
+    }
+
+    .negative {
+      color: #ff4c4c;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Crypto Arbitrage Monitor</h1>
+  <table>
+    <thead>
+      <tr>
+        <th>Pair</th>
+        <th>Binance Price</th>
+        <th>Coinbase Price</th>
+        <th>Arbitrage</th>
+      </tr>
+    </thead>
+    <tbody id="arbitrage-table"></tbody>
+  </table>
+
+  <script>
+    const pairs = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'ADAUSDT'];
+    const prices = {};
+
+    const table = document.getElementById('arbitrage-table');
+
+    pairs.forEach(pair => {
+      prices[pair] = { binance: 0, coinbase: 0 };
+      const row = document.createElement('tr');
+      row.id = `row-${pair}`;
+      row.innerHTML = `
+        <td>${pair}</td>
+        <td id="binance-${pair}">--</td>
+        <td id="coinbase-${pair}">--</td>
+        <td id="arbitrage-${pair}">--</td>
+      `;
+      table.appendChild(row);
+    });
+
+    // Binance WebSocket streams (1 connection for all pairs combined)
+    const binanceSocket = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${pairs.map(p => p.toLowerCase() + '@ticker').join('/')}`);
+    binanceSocket.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      const data = msg.data;
+      const symbol = data.s;
+      prices[symbol].binance = parseFloat(data.c);
+      document.getElementById(`binance-${symbol}`).textContent = prices[symbol].binance.toFixed(4);
+      checkArbitrage(symbol);
+    };
+
+    // Coinbase REST API updates every 3 seconds
+    async function fetchCoinbasePrices() {
+      for (const pair of pairs) {
+        const product = pair.slice(0, -4) + '-USD'; // BTCUSDT → BTC-USD
+        try {
+          const res = await fetch(`https://api.exchange.coinbase.com/products/${product}/ticker`);
+          const json = await res.json();
+          prices[pair].coinbase = parseFloat(json.price);
+          document.getElementById(`coinbase-${pair}`).textContent = prices[pair].coinbase.toFixed(4);
+          checkArbitrage(pair);
+        } catch (err) {
+          console.error(`${pair} Coinbase price fetch error`, err);
+        }
+      }
+    }
+
+    setInterval(fetchCoinbasePrices, 3000);
+    fetchCoinbasePrices();
+
+    function checkArbitrage(pair) {
+      const { binance, coinbase } = prices[pair];
+      if (binance && coinbase) {
+        const diff = binance - coinbase;
+        const percent = (diff / coinbase) * 100;
+        const cell = document.getElementById(`arbitrage-${pair}`);
+
+        if (Math.abs(percent) > 0.1) {
+          if (percent > 0) {
+            cell.innerHTML = `<span class="positive">Buy Coinbase → Sell Binance (+${percent.toFixed(2)}%)</span>`;
+          } else {
+            cell.innerHTML = `<span class="positive">Buy Binance → Sell Coinbase (+${Math.abs(percent).toFixed(2)}%)</span>`;
+          }
+        } else {
+          cell.innerHTML = `<span class="negative">No Arbitrage</span>`;
+        }
+      }
+    }
+  </script>
+</body>
+
+</html>
